@@ -4,5 +4,5 @@
   "version": "0.1.0",
   "config_flow": true,
   "iot_class": "assumed",
-  "requirements": ["git+https://github.com/vincent-rondot/pergola_controller.git@v0.1.0"]
+  "requirements": ["pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.1.0"]
 }
