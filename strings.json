@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your pergola",
+        "description": "Select the pergola detected nearby, then enter its Android ID and PIN.",
+        "data": {
+          "address": "Device",
+          "android_id": "Android ID",
+          "pin": "PIN"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the pergola. Check that it is powered on, in range, and not currently connected to another app."
+    },
+    "abort": {
+      "already_configured": "This pergola is already configured"
+    }
+  }
+}
