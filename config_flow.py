@@ -25,6 +25,11 @@ _LOGGER = logging.getLogger(__name__)
 # can be set up and tested without real BLE hardware.
 _SIMULATED_ADDRESS = "00:11:22:33:44:55"
 
+# The device firmware requires its advertised name to start with this prefix
+# to be recognized as a controllable device at all - a reliable filter for a
+# BLE device list that's otherwise full of unrelated nearby devices.
+_NAME_PREFIX = "$%&_"
+
 
 class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Pergola."""
@@ -42,9 +47,13 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
         # here gets cut off almost instantly when run inside the live HA
         # process (observed: 0 devices after 0.0s, no exception - consistent
         # with HA's own flow-step handling racing/cancelling it).
-        service_infos = bluetooth.async_discovered_service_info(
-            self.hass, connectable=True
-        )
+        service_infos = [
+            info
+            for info in bluetooth.async_discovered_service_info(
+                self.hass, connectable=True
+            )
+            if (info.name or "").startswith(_NAME_PREFIX)
+        ]
         options = [
             SelectOptionDict(
                 value=info.address, label=f"{info.name or info.address} ({info.address})"
