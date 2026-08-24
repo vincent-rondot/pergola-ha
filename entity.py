@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from pergola_controller import Pergola
 
+from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_PIN
 from homeassistant.exceptions import HomeAssistantError
@@ -39,7 +40,12 @@ class PergolaEntity(Entity):
         out.
         """
         try:
-            async with Pergola(self._address, self._client_id, self._pin) as pergola:
+            ble_device = bluetooth.async_ble_device_from_address(
+                self.hass, self._address, connectable=True
+            )
+            async with Pergola(
+                self._address, self._client_id, self._pin, ble_device=ble_device
+            ) as pergola:
                 yield pergola
         except Exception as err:
             raise HomeAssistantError(
