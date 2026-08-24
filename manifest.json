@@ -1,9 +1,9 @@
 {
   "domain": "pergola",
   "name": "Pergola",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "config_flow": true,
   "dependencies": ["bluetooth"],
   "iot_class": "assumed",
-  "requirements": ["pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.1.5"]
+  "requirements": ["pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.1.6"]
 }
