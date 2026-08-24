@@ -3,9 +3,11 @@
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_ADDRESS, CONF_PIN, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 
-from .const import PLATFORMS
+from .const import CONF_CLIENT_ID, PLATFORMS
+from .entity import PergolaConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +31,24 @@ _LOGGER.info(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Pergola from a config entry."""
+    entry.runtime_data = PergolaConnection(
+        hass,
+        entry.data[CONF_ADDRESS],
+        entry.data[CONF_CLIENT_ID],
+        entry.data[CONF_PIN],
+    )
+
+    async def _async_disconnect(_event=None) -> None:
+        await entry.runtime_data.async_disconnect()
+
+    # Disconnect on entry unload/removal (e.g. deleting the integration) AND
+    # on Home Assistant shutdown/restart - a shared connection left dangling
+    # would otherwise keep locking out the manufacturer's phone app.
+    entry.async_on_unload(_async_disconnect)
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_disconnect)
+    )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
