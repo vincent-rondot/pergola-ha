@@ -37,15 +37,19 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Scan for nearby pergolas, then ask for its credentials."""
         errors: dict[str, str] = {}
-        _LOGGER.warning("pergola: about to call scan_devices()")
-        _scan_start = time.monotonic()
+        try:
+            from bleak import BleakScanner as _RawScanner
+
+            _scan_start = time.monotonic()
+            raw = await _RawScanner.discover(timeout=10.0)
+            _LOGGER.warning(
+                "pergola: RAW bleak scan returned %d devices after %.1fs",
+                len(raw),
+                time.monotonic() - _scan_start,
+            )
+        except Exception:
+            _LOGGER.exception("pergola: RAW bleak scan raised")
         devices = await PergolaClient(android_id="0").scan_devices()
-        _LOGGER.warning(
-            "pergola: scan_devices() returned %d devices after %.1fs: %s",
-            len(devices),
-            time.monotonic() - _scan_start,
-            devices,
-        )
         options = [
             SelectOptionDict(
                 value=device["address"],
