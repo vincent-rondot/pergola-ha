@@ -1,7 +1,7 @@
 {
   "domain": "pergola",
   "name": "Pergola",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "config_flow": true,
   "iot_class": "assumed",
   "requirements": ["pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.1.1"]

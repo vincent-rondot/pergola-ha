@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 
-from .const import CONF_ANDROID_ID, DOMAIN
+from .const import CONF_CLIENT_ID, DOMAIN
 
 
 class PergolaEntity(Entity):
@@ -23,7 +23,7 @@ class PergolaEntity(Entity):
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
         self._address = entry.data[CONF_ADDRESS]
-        self._android_id = entry.data[CONF_ANDROID_ID]
+        self._client_id = entry.data[CONF_CLIENT_ID]
         self._pin = entry.data[CONF_PIN]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -39,7 +39,7 @@ class PergolaEntity(Entity):
         out.
         """
         try:
-            async with Pergola(self._address, self._android_id, self._pin) as pergola:
+            async with Pergola(self._address, self._client_id, self._pin) as pergola:
                 yield pergola
         except Exception as err:
             raise HomeAssistantError(

@@ -6,4 +6,4 @@ DOMAIN = "pergola"
 
 PLATFORMS: list[Platform] = [Platform.COVER, Platform.LIGHT]
 
-CONF_ANDROID_ID = "android_id"
+CONF_CLIENT_ID = "client_id"

@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "Connect to your pergola",
-        "description": "Select the pergola detected nearby, then enter its Android ID and PIN.",
+        "description": "Select the pergola detected nearby, then enter its client ID and PIN.\n\n{warning}",
         "data": {
           "address": "Device",
-          "android_id": "Android ID",
+          "client_id": "Client ID",
           "pin": "PIN"
         }
       }
