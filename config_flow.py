@@ -1,6 +1,7 @@
 """Config flow for the Pergola integration."""
 
 import logging
+import time
 from typing import Any
 
 from pergola_controller import Pergola
@@ -36,7 +37,15 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Scan for nearby pergolas, then ask for its credentials."""
         errors: dict[str, str] = {}
+        _LOGGER.warning("pergola: about to call scan_devices()")
+        _scan_start = time.monotonic()
         devices = await PergolaClient(android_id="0").scan_devices()
+        _LOGGER.warning(
+            "pergola: scan_devices() returned %d devices after %.1fs: %s",
+            len(devices),
+            time.monotonic() - _scan_start,
+            devices,
+        )
         options = [
             SelectOptionDict(
                 value=device["address"],
