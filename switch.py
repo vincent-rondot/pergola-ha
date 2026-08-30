@@ -16,8 +16,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the pergola stay-connected switch."""
-    async_add_entities([PergolaStayConnectedSwitch(entry)])
+    """Set up the pergola switches."""
+    async_add_entities(
+        [
+            PergolaStayConnectedSwitch(entry),
+            PergolaWindProtectionSwitch(entry),
+            PergolaWinterSunSwitch(entry),
+        ]
+    )
 
 
 class PergolaStayConnectedSwitch(PergolaEntity, SwitchEntity):
@@ -43,3 +49,68 @@ class PergolaStayConnectedSwitch(PergolaEntity, SwitchEntity):
         self._connection.async_set_stay_connected(False)
         self._attr_is_on = False
         self.async_write_ha_state()
+
+
+class PergolaWindProtectionSwitch(PergolaEntity, SwitchEntity):
+    """Closes the pergola on high wind. Always available, independent of
+    winter sun mode - replaces the device's own wind sensor, which was
+    disconnected because its stock behavior (open on wind) is wrong for this
+    slat geometry."""
+
+    _attr_name = "Wind protection"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        """Initialize the switch."""
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_wind_protection"
+
+    @property
+    def is_on(self) -> bool:
+        return self._wind_protection.enabled
+
+    async def async_added_to_hass(self) -> None:
+        self._wind_protection.add_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._wind_protection.remove_listener(self._handle_update)
+
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._wind_protection.async_enable()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._wind_protection.async_disable()
+
+
+class PergolaWinterSunSwitch(PergolaEntity, SwitchEntity):
+    """Winter sun mode: nudges the slats closed through the day to track the
+    sun, starting from whenever the cover was last opened by hand. Off by
+    default - opt-in, seasonal."""
+
+    _attr_name = "Winter sun mode"
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        """Initialize the switch."""
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_winter_sun_mode"
+
+    @property
+    def is_on(self) -> bool:
+        return self._winter_sun.enabled
+
+    async def async_added_to_hass(self) -> None:
+        self._winter_sun.add_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._winter_sun.remove_listener(self._handle_update)
+
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._winter_sun.async_enable()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._winter_sun.async_disable()

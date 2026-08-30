@@ -17,5 +17,16 @@
     "abort": {
       "already_configured": "This pergola is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Weather entity",
+        "description": "Used by both \"Wind protection\" and \"Winter sun mode\" to know when it's raining or windy. Most Home Assistant installs already have one for free (e.g. a Met.no entity auto-added during onboarding) - check Developer Tools → States for anything starting with \"weather.\" if you're not sure.",
+        "data": {
+          "weather_entity_id": "Weather entity"
+        }
+      }
+    }
   }
 }

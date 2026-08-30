@@ -6,8 +6,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_PIN, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_CLIENT_ID, PLATFORMS
-from .entity import PergolaConnection
+from .const import CONF_CLIENT_ID, CONF_WEATHER_ENTITY_ID, PLATFORMS
+from .entity import PergolaConnection, PergolaRuntimeData
+from .sun_tracker import WinterSunController
+from .weather_guard import WindProtectionController
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,15 +33,35 @@ _LOGGER.info(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Pergola from a config entry."""
-    entry.runtime_data = PergolaConnection(
+
+    def _get_weather_entity_id() -> str | None:
+        # Read live from entry.options (not captured once) so an options
+        # change - which reloads the entry via OptionsFlowWithReload anyway -
+        # isn't the only way this can pick up an edit.
+        return entry.options.get(CONF_WEATHER_ENTITY_ID)
+
+    connection = PergolaConnection(
         hass,
         entry.data[CONF_ADDRESS],
         entry.data[CONF_CLIENT_ID],
         entry.data[CONF_PIN],
     )
+    wind_protection = WindProtectionController(hass, _get_weather_entity_id)
+    winter_sun = WinterSunController(
+        hass,
+        entry,
+        connection,
+        _get_weather_entity_id,
+        lambda: wind_protection.wind_speed_threshold,
+    )
+    entry.runtime_data = PergolaRuntimeData(
+        connection=connection, wind_protection=wind_protection, winter_sun=winter_sun
+    )
 
     async def _async_disconnect(_event=None) -> None:
-        await entry.runtime_data.async_disconnect()
+        await wind_protection.async_disable()
+        await winter_sun.async_disable()
+        await connection.async_disconnect()
 
     # Disconnect on entry unload/removal (e.g. deleting the integration) AND
     # on Home Assistant shutdown/restart - a shared connection left dangling
@@ -50,6 +72,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Wind protection is a safety feature, not a seasonal one: it starts
+    # enabled on every setup (a configured weather entity is required for it
+    # to actually do anything - see WindProtectionController.async_enable).
+    # It does not persist a user "off" across restarts, same as every other
+    # switch in this integration (e.g. "Stay connected") - simplest to
+    # reason about, and defaults back towards protection rather than away
+    # from it.
+    if _get_weather_entity_id() is not None:
+        await wind_protection.async_enable()
+
     return True
 
 

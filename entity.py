@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 from pergola_controller import Pergola
 
@@ -15,6 +16,8 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN
+from .sun_tracker import WinterSunController
+from .weather_guard import WindProtectionController
 
 DEFAULT_IDLE_TIMEOUT = 60.0
 
@@ -112,6 +115,15 @@ class PergolaConnection:
             self._notify_listeners()
 
 
+@dataclass
+class PergolaRuntimeData:
+    """Everything shared across this config entry's entities."""
+
+    connection: PergolaConnection
+    wind_protection: WindProtectionController
+    winter_sun: WinterSunController
+
+
 class PergolaEntity(Entity):
     """Base entity sharing device info and the shared BLE connection."""
 
@@ -120,7 +132,10 @@ class PergolaEntity(Entity):
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
-        self._connection: PergolaConnection = entry.runtime_data
+        runtime_data: PergolaRuntimeData = entry.runtime_data
+        self._connection = runtime_data.connection
+        self._wind_protection = runtime_data.wind_protection
+        self._winter_sun = runtime_data.winter_sun
         self._address = entry.data[CONF_ADDRESS]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},

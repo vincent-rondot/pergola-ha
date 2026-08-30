@@ -8,16 +8,24 @@ from pergola_controller.config import DEFAULT_PIN
 import voluptuous as vol
 
 from homeassistant.components import bluetooth
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_ADDRESS, CONF_PIN
+from homeassistant.core import callback
 from homeassistant.helpers import instance_id as instance_id_helper
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
 )
 
-from .const import CONF_CLIENT_ID, DOMAIN
+from .const import CONF_CLIENT_ID, CONF_WEATHER_ENTITY_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +43,12 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Pergola."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> "PergolaOptionsFlowHandler":
+        """Get the options flow for this handler."""
+        return PergolaOptionsFlowHandler()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -115,4 +129,30 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={"warning": warning},
+        )
+
+
+class PergolaOptionsFlowHandler(OptionsFlowWithReload):
+    """Options for Pergola - currently just the weather entity used by wind
+    protection and winter sun mode."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage Pergola options."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_WEATHER_ENTITY_ID): EntitySelector(
+                    EntitySelectorConfig(domain="weather")
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                schema, self.config_entry.options
+            ),
         )
