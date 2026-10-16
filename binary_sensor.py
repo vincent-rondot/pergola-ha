@@ -19,7 +19,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up the pergola binary sensors."""
     async_add_entities(
-        [PergolaConnectedSensor(entry), PergolaWindProtectionActiveSensor(entry)]
+        [
+            PergolaConnectedSensor(entry),
+            PergolaWindProtectionActiveSensor(entry),
+            PergolaWeatherStationOverrideSensor(entry),
+        ]
     )
 
 
@@ -46,6 +50,37 @@ class PergolaConnectedSensor(PergolaEntity, BinarySensorEntity):
         self._connection.remove_listener(self._handle_connection_update)
 
     def _handle_connection_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class PergolaWeatherStationOverrideSensor(PergolaEntity, BinarySensorEntity):
+    """Read-only: whether the card's own wired weather-station input is
+    currently forcing an override (pergola_controller 0.2.0+). Deliberately
+    read-only - the lib also exposes set_weather_override(), but turning it
+    on disables the card's automatic rain-close, which needs Vincent's
+    explicit say-so before it's wired up to a switch here (not done as of
+    2026-10-13)."""
+
+    _attr_name = "Weather station override"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_weather_station_override"
+
+    @property
+    def is_on(self) -> bool | None:
+        status = self._connection.status
+        return status.override if status is not None else None
+
+    async def async_added_to_hass(self) -> None:
+        self._connection.add_status_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._connection.remove_status_listener(self._handle_update)
+
+    def _handle_update(self) -> None:
         self.async_write_ha_state()
 
 

@@ -73,6 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # the user had it set to (2026-10-09 fix). Only tear down the
         # schedule subscription, leave `enabled`/the entity state alone.
         winter_sun.unsubscribe_schedule()
+        connection.async_stop()
         await connection.async_disconnect()
 
     # Disconnect on entry unload/removal (e.g. deleting the integration) AND
@@ -84,6 +85,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Periodic status poll (pergola_controller 0.2.0+): connects briefly
+    # every `status_poll_interval` seconds to pick up a fresh PergolaStatus,
+    # then disconnects - deliberately NOT a permanent connection (would lock
+    # out the manufacturer's phone app indefinitely, rejected 2026-10-13).
+    # "Stay connected" (off by default) switches to a real permanent
+    # connection with auto-reconnect instead - see entity.py.
+    connection.async_start()
 
     # Wind protection is a safety feature, not a seasonal one: it starts
     # enabled on every setup (a configured weather entity is required for it

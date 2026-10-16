@@ -24,6 +24,7 @@ async def async_setup_entry(
             PergolaWindThresholdNumber(entry),
             PergolaPositionDeadbandNumber(entry),
             PergolaEstimatedOpenPercentageNumber(entry),
+            PergolaStatusPollIntervalNumber(entry),
         ]
     )
 
@@ -118,6 +119,36 @@ class PergolaPulseStartDelayNumber(PergolaEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         self._winter_sun.pulse_start_delay = value
+        self.async_write_ha_state()
+
+
+class PergolaStatusPollIntervalNumber(PergolaEntity, NumberEntity):
+    """How often (seconds) to briefly connect, grab a fresh real-state
+    report (pergola_controller 0.2.0+), and disconnect again - only used
+    while "Stay connected" is off (the default). Deliberately NOT a
+    permanent connection: the device only accepts one BLE client at a time,
+    so holding the link open 24/7 would lock out the manufacturer's phone
+    app indefinitely (rejected 2026-10-13 for exactly that reason)."""
+
+    _attr_name = "Status poll interval"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 60
+    _attr_native_max_value = 3600
+    _attr_native_step = 30
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        """Initialize the number entity."""
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_status_poll_interval"
+
+    @property
+    def native_value(self) -> float:
+        return self._connection.status_poll_interval
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._connection.async_set_status_poll_interval(value)
         self.async_write_ha_state()
 
 

@@ -1,18 +1,25 @@
 """Winter sun-tracking mode.
 
-Nudges the pergola's slats closed through the day to follow the sun, using
-only timed Close pulses - the device only exposes Open/Close/Stop, no real
-position feedback. This controller never opens the cover itself: the user
-opens it by hand whenever they want the day's tracking to start from "fully
-open", and everything from there is just Close pulses tracking the sun's
-westward sweep. See weather_guard.py for the wind/rain awareness this pauses
-on.
+Nudges the pergola's slats closed through the day to follow the sun, aiming
+the slats' angle at the sun's real profile angle (see _profile_angle()) so
+they pass maximum light rather than blocking it - using only timed Close
+pulses, the device's only fine-grained control. Tracking for a given day
+starts from "fully open" (1.0): either the user opens it by hand (HA, the
+vendor app, or the remote - see on_manual_open()), or - since
+pergola_controller 0.2.1 gave this integration real status feedback - this
+controller does it itself, once, at the first check of each day, if the
+weather looks clear (see _async_auto_open(), 2026-10-16). Every check after
+that is still only ever a Close pulse, same as before. See weather_guard.py
+for the wind/rain awareness this pauses on - rain only gates the daily
+auto-open, not the regular pulses (2026-10-16 - see _async_check()'s
+comments for why).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import TYPE_CHECKING
@@ -38,13 +45,24 @@ _LOGGER = logging.getLogger(__name__)
 CHECK_INTERVAL_CHOICES = [5, 10, 15, 30, 60]
 DEFAULT_CHECK_INTERVAL_MINUTES = 15
 
-# Tuned for a terrace facing close to due south (S-SSE, ~165 deg), slats
-# perpendicular to the wall, closing towards the west. Hand-adjust these if
-# tracking starts/stops too early or late relative to when the sun actually
-# clears/leaves the terrace.
-TRACK_START_AZIMUTH = 100.0
-TRACK_END_AZIMUTH = 260.0
-MIN_POSITION = 0.4  # never auto-close past 60% closed - keep maximizing sun
+# Confirmed 2026-10-16 (Vincent - order e-mail to the installer, and the
+# vendor's spec sheet): the terrace faces 165 deg exactly, slats run
+# perpendicular to the wall (each slat's long axis points away from the
+# house) and pivot together from 0 deg (closed, flat, overlapping -
+# watertight) up to 140 deg (fully open). Deliberately ordered to open
+# towards the west ("pour maximiser le soleil du soir" - Vincent's own
+# words to the installer) - see _profile_angle()'s docstring for how that
+# shapes the model below.
+WALL_ORIENTATION = 165.0  # degrees, compass bearing the terrace faces
+MAX_SLAT_ANGLE = 140.0  # degrees, 0 = closed/flat
+
+TRACK_END_AZIMUTH = 260.0  # safety cap - treat anything past this as MIN_POSITION
+MIN_POSITION = 0.4  # never auto-close past 60% closed (angle 56 deg) - real
+# slats have real thickness, so the idealized "angle = exact profile angle"
+# geometry below stops meaning anything useful at shallow angles anyway (a
+# near-flat slat doesn't pass meaningfully more light than a fully closed
+# one, whatever the math says) - confirmed by Vincent 2026-10-16, keeping
+# this floor rather than chasing the model all the way to ~5% near sunset.
 
 # Default for the "Winter sun deadband" number entity - ignore corrections
 # smaller than this (as a 0-1 fraction). Lower it (e.g. via that entity) to
@@ -52,7 +70,12 @@ MIN_POSITION = 0.4  # never auto-close past 60% closed - keep maximizing sun
 # when testing against the simulated device.
 DEFAULT_POSITION_DEADBAND = 0.05
 
-DEFAULT_FULL_TRAVEL_TIME = 67.0  # seconds - measured with a stopwatch on the real hardware (1 min 7 s)
+# seconds. Was 67.0 (stopwatch guess). Remeasured 2026-10-14 from real board
+# events (pergola_controller 0.2.1+ event feed, not available when the
+# stopwatch figure was taken): a full, uninterrupted open from `A`
+# (opening started, 07:29:10.059) to `K` (end_of_travel, 07:30:24.699) took
+# 74.6s - rounded up here. Confirmed `blades: 'open'` on the next poll.
+DEFAULT_FULL_TRAVEL_TIME = 75.0
 
 # Fixed per-pulse overhead added on top of the proportional delta*full_travel_time
 # duration, to account for however long the motor/BLE link takes to actually start
@@ -77,14 +100,43 @@ STORAGE_KEY_PREFIX = "pergola_winter_sun"
 ANIMATION_TICK = 1.0  # seconds - purely cosmetic granularity for the diagnostic sensor
 
 
-def _target_position(azimuth: float) -> float:
-    """Desired virtual position (1.0 = fully open) for a given solar azimuth."""
-    if azimuth <= TRACK_START_AZIMUTH:
-        return 1.0
+def _profile_angle(azimuth: float, elevation: float) -> float | None:
+    """The sun's "profile angle": how high it appears, in degrees, within
+    the vertical plane perpendicular to the slats' rotation axis - this is
+    the angle the slats need to match to lie edge-on to the sun and pass
+    the most light through the gaps, instead of blocking it with their own
+    width. Standard architectural shading formula
+    (atan(tan(elevation)/cos(azimuth - reference))), adapted by 90 deg from
+    its usual form because these slats are perpendicular to the wall, not
+    parallel to it like a standard window overhang.
+
+    Returns None when the sun is on the wrong side of the slats' axis for
+    this one-directional mechanism (the "opens towards the west" choice
+    made at order time only ever gives a sensible, usable angle once the
+    sun has crossed to the western half of the sky - mornings have no
+    meaningful profile angle for it at all). Confirmed against real azimuth/
+    elevation data from 2026-10-16: the crossing happens right around solar
+    noon, exactly where "opens towards the west" would predict it should."""
+    reference_bearing = WALL_ORIENTATION + 90.0
+    cos_term = math.cos(math.radians(azimuth - reference_bearing))
+    if cos_term <= 0:
+        return None
+    return math.degrees(math.atan(math.tan(math.radians(elevation)) / cos_term))
+
+
+def _target_position(azimuth: float, elevation: float) -> float:
+    """Desired virtual position (1.0 = fully open) for the sun's current
+    position - follows the real slat geometry (_profile_angle) rather than
+    a simple azimuth ramp, floored at MIN_POSITION throughout."""
     if azimuth >= TRACK_END_AZIMUTH:
         return MIN_POSITION
-    fraction = (azimuth - TRACK_START_AZIMUTH) / (TRACK_END_AZIMUTH - TRACK_START_AZIMUTH)
-    return 1.0 - fraction * (1.0 - MIN_POSITION)
+    profile = _profile_angle(azimuth, elevation)
+    if profile is None:
+        # Morning, or any other position this one-directional mechanism
+        # can't usefully align to - nothing to gain by closing at all.
+        return 1.0
+    angle = max(0.0, min(MAX_SLAT_ANGLE, profile))
+    return max(MIN_POSITION, angle / MAX_SLAT_ANGLE)
 
 
 class WinterSunController:
@@ -126,6 +178,13 @@ class WinterSunController:
         # precisely by on_manual_open() whenever HA does see a real open.
         self._last_check_target: float | None = None
         self._last_check_date: date | None = None
+        # One-shot daily auto-open attempt (2026-10-16): set the moment the
+        # first check of a new day runs, regardless of whether the attempt
+        # that follows actually succeeds - deliberately NOT retried later
+        # that day if blocked by weather (Vincent's choice: one try at
+        # dawn, give up and open by hand otherwise, rather than keep
+        # retrying and opening unexpectedly later in the day).
+        self._auto_open_attempted_date: date | None = None
         # Purely cosmetic best-guess for the diagnostic sensor - never read
         # for any decision-making. Updated instantly (unlike the animated
         # _display_position below).
@@ -139,6 +198,16 @@ class WinterSunController:
         self._listeners: list[Callable[[], None]] = []
         self._unsub_interval: Callable[[], None] | None = None
         self._store: Store[dict] = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_PREFIX}_{entry.entry_id}")
+        # pergola_controller 0.2.0+ reports the blades' real state over BLE.
+        # Whenever it confirms "open" or "closed" - regardless of who/what
+        # caused it (HA, the physical remote, the vendor app) - that's a
+        # fact we didn't have before, so sync the cosmetic display estimate
+        # to match (100%/0%) exactly like on_manual_open()/on_manual_close()
+        # already do for HA-driven commands. _last_known_blades guards
+        # against re-firing on every repeated status message while it just
+        # sits open/closed (only react on an actual transition).
+        self._last_known_blades: str | None = None
+        connection.add_status_listener(self._on_connection_status)
 
     async def async_load(self) -> None:
         """Restore the sun-tracking baseline saved by _schedule_save(), if
@@ -150,6 +219,7 @@ class WinterSunController:
         target = data.get("last_check_target")
         date_str = data.get("last_check_date")
         position = data.get("virtual_position")
+        auto_open_date_str = data.get("auto_open_attempted_date")
         if target is not None:
             self._last_check_target = target
         if date_str is not None:
@@ -157,6 +227,8 @@ class WinterSunController:
         if position is not None:
             self._virtual_position = position
             self._display_position = position
+        if auto_open_date_str is not None:
+            self._auto_open_attempted_date = date.fromisoformat(auto_open_date_str)
 
     def _schedule_save(self) -> None:
         """Fire-and-forget persist of the current baseline - called from
@@ -167,6 +239,11 @@ class WinterSunController:
                 self._last_check_date.isoformat() if self._last_check_date else None
             ),
             "virtual_position": self._virtual_position,
+            "auto_open_attempted_date": (
+                self._auto_open_attempted_date.isoformat()
+                if self._auto_open_attempted_date
+                else None
+            ),
         }
         self._hass.async_create_task(self._store.async_save(data))
 
@@ -219,6 +296,25 @@ class WinterSunController:
             self._notify_listeners()
         self._display_position = target
         self._notify_listeners()
+
+    def _on_connection_status(self) -> None:
+        """Fired on every PergolaStatus update (see PergolaConnection). Only
+        acts on an actual open<->closed transition - repeated status
+        messages while it just sits in one of those states must NOT keep
+        re-triggering on_manual_open()/on_manual_close(), or the tracking
+        baseline would get force-reset every ~5s all day and winter sun mode
+        could never accumulate a meaningful delta."""
+        status = self._connection.status
+        if status is None:
+            return
+        blades = status.blades
+        if blades == self._last_known_blades:
+            return
+        self._last_known_blades = blades
+        if blades == "open":
+            self.on_manual_open()
+        elif blades == "closed":
+            self.on_manual_close()
 
     def on_manual_open(self) -> None:
         """Call whenever the cover is opened (by the user, via HA). This is
@@ -334,25 +430,69 @@ class WinterSunController:
     async def _async_scheduled_check(self, now: datetime) -> None:
         await self._async_check()
 
+    async def _async_auto_open(self) -> None:
+        """One-shot daily auto-open, called only from _async_check() on the
+        first above-horizon check of the day once weather looks clear (see
+        there). Just issues a plain Open, exactly as if the user had
+        pressed the cover's own Open button - no need to check the real
+        status first, since Open is always safe to (re)send regardless of
+        current position. Best-effort: a BLE failure here just means
+        today's baseline doesn't get the immediate 1.0 catch-up that
+        on_manual_open() gives - the existing silent-seed fallback in
+        _async_check() still applies, same as if this feature didn't exist
+        at all."""
+        try:
+            pergola = await self._connection.async_get()
+            await pergola.open()
+        except Exception as err:  # noqa: BLE001 - best-effort, never block the rest of the check
+            _LOGGER.warning("Winter sun mode: daily auto-open failed (%s)", err)
+            return
+        finally:
+            self._connection.async_schedule_idle_disconnect()
+        _LOGGER.info("Winter sun mode: auto-opened for the day (clear weather at dawn)")
+        self.on_manual_open()
+
     async def _async_check(self) -> None:
         sun_state = self._hass.states.get("sun.sun")
         if sun_state is None or sun_state.state != "above_horizon":
             return
 
         weather_entity_id = self._get_weather_entity_id()
-        if is_raining(self._hass, weather_entity_id) or is_windy(
-            self._hass, weather_entity_id, self._get_wind_threshold()
-        ):
-            # The device's own rain sensor, and the separate wind protection
-            # switch, are already the ones responsible for closing in these
-            # conditions - just stay quiet rather than add redundant traffic.
+
+        today = dt_util.now().date()
+        if self._auto_open_attempted_date != today:
+            # First check above the horizon today - the one and only
+            # opportunity to auto-open for the day. Checks rain AND wind
+            # (unlike the regular pulse-pause below, which only checks wind
+            # - see 2026-10-16 discussion: pausing *pulses* for rain only
+            # ever mattered in one narrow case, a deliberate manual reopen
+            # mid-rain, and even then the consequence was a small, harmless
+            # catch-up pulse - not worth the complexity. Opening onto active
+            # rain is a completely different, much more real problem, so
+            # rain still gates this). Marked attempted *before* the checks,
+            # on purpose: a single miss means giving up for today, not
+            # retrying every 15 minutes and potentially opening unexpectedly
+            # later - open by hand instead if that happens.
+            self._auto_open_attempted_date = today
+            self._schedule_save()
+            if not is_raining(self._hass, weather_entity_id) and not is_windy(
+                self._hass, weather_entity_id, self._get_wind_threshold()
+            ):
+                await self._async_auto_open()
+
+        if is_windy(self._hass, weather_entity_id, self._get_wind_threshold()):
+            # Wind protection (separate switch) already closes on high wind
+            # independently of winter sun mode - just stay quiet rather than
+            # add redundant traffic. Rain is deliberately NOT checked here
+            # any more (2026-10-16) - see the auto-open comment above.
             return
 
         azimuth = sun_state.attributes.get("azimuth")
-        if azimuth is None:
+        elevation = sun_state.attributes.get("elevation")
+        if azimuth is None or elevation is None:
             return
 
-        target = _target_position(azimuth)
+        target = _target_position(azimuth, elevation)
 
         today = dt_util.now().date()
         if self._last_check_target is None or self._last_check_date != today:
