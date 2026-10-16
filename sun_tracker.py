@@ -21,6 +21,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .weather_guard import NO_WEATHER_ENTITY_ERROR, is_raining, is_windy
@@ -52,6 +53,27 @@ MIN_POSITION = 0.4  # never auto-close past 60% closed - keep maximizing sun
 DEFAULT_POSITION_DEADBAND = 0.05
 
 DEFAULT_FULL_TRAVEL_TIME = 67.0  # seconds - measured with a stopwatch on the real hardware (1 min 7 s)
+
+# Fixed per-pulse overhead added on top of the proportional delta*full_travel_time
+# duration, to account for however long the motor/BLE link takes to actually start
+# moving after a Close command is sent - a cost every pulse pays regardless of its
+# size, so it disproportionately shortchanges small pulses if left uncompensated
+# (observed 2026-10-10: winter sun mode's small nudges left the real slats visibly
+# more open than the modelled position by late afternoon). 2026-10-11 placeholder:
+# arbitrary (5% of that day's ~3.9s average pulse), not yet measured - replace with
+# a real value once timed against the hardware (see "Pulse start delay" number
+# entity docstring for the measurement procedure). 2026-10-12: 0.2s still wasn't
+# enough (pergola still under-closing by end of day) - doubled to 0.4s, still an
+# arbitrary placeholder pending real measurement.
+DEFAULT_PULSE_START_DELAY = 0.4  # seconds
+
+# Persists _last_check_target/_last_check_date/_virtual_position across
+# HA restarts (2026-10-09 fix). Before this, every restart silently reset
+# the sun-tracking baseline to "100% open, no reference for today" even
+# though the real pergola hadn't moved - the next check would then pulse
+# against that wrong baseline, overshooting. One file per config entry.
+STORAGE_VERSION = 1
+STORAGE_KEY_PREFIX = "pergola_winter_sun"
 ANIMATION_TICK = 1.0  # seconds - purely cosmetic granularity for the diagnostic sensor
 
 
@@ -87,6 +109,7 @@ class WinterSunController:
         self._get_wind_threshold = get_wind_threshold
         self.enabled = False
         self.full_travel_time: float = DEFAULT_FULL_TRAVEL_TIME
+        self.pulse_start_delay: float = DEFAULT_PULSE_START_DELAY
         self.position_deadband: float = DEFAULT_POSITION_DEADBAND
         self.check_interval_minutes: int = DEFAULT_CHECK_INTERVAL_MINUTES
         # The sun-tracking baseline: the target position (see
@@ -115,6 +138,37 @@ class WinterSunController:
         self._animation_task: asyncio.Task | None = None
         self._listeners: list[Callable[[], None]] = []
         self._unsub_interval: Callable[[], None] | None = None
+        self._store: Store[dict] = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_PREFIX}_{entry.entry_id}")
+
+    async def async_load(self) -> None:
+        """Restore the sun-tracking baseline saved by _schedule_save(), if
+        any. Must run before anything can call async_enable()/_async_check()
+        - see __init__.py, which awaits this right after construction."""
+        data = await self._store.async_load()
+        if not data:
+            return
+        target = data.get("last_check_target")
+        date_str = data.get("last_check_date")
+        position = data.get("virtual_position")
+        if target is not None:
+            self._last_check_target = target
+        if date_str is not None:
+            self._last_check_date = date.fromisoformat(date_str)
+        if position is not None:
+            self._virtual_position = position
+            self._display_position = position
+
+    def _schedule_save(self) -> None:
+        """Fire-and-forget persist of the current baseline - called from
+        sync methods, so this can't just be awaited inline."""
+        data = {
+            "last_check_target": self._last_check_target,
+            "last_check_date": (
+                self._last_check_date.isoformat() if self._last_check_date else None
+            ),
+            "virtual_position": self._virtual_position,
+        }
+        self._hass.async_create_task(self._store.async_save(data))
 
     def add_listener(self, listener: Callable[[], None]) -> None:
         self._listeners.append(listener)
@@ -178,6 +232,7 @@ class WinterSunController:
         self._virtual_position = 1.0
         self._notify_listeners()
         self._start_animation_to(1.0)
+        self._schedule_save()
 
     def on_manual_close(self) -> None:
         """Call whenever the cover is closed (by the user, or wind
@@ -189,6 +244,7 @@ class WinterSunController:
         self._virtual_position = 0.0
         self._notify_listeners()
         self._start_animation_to(0.0)
+        self._schedule_save()
 
     def on_manual_stop(self) -> None:
         """Call whenever the cover is stopped mid-travel (by the user, via
@@ -204,6 +260,7 @@ class WinterSunController:
             self._animation_task.cancel()
         self._virtual_position = self._display_position
         self._notify_listeners()
+        self._schedule_save()
 
     def recalibrate(self, percentage: float) -> None:
         """Manually correct the *displayed* estimate, e.g. after eyeballing
@@ -222,6 +279,7 @@ class WinterSunController:
         self._virtual_position = position
         self._display_position = position
         self._notify_listeners()
+        self._schedule_save()
 
     def _register_schedule(self) -> None:
         """(Re)subscribe the periodic check at the clock minutes implied by
@@ -253,6 +311,16 @@ class WinterSunController:
         self._register_schedule()
         self._notify_listeners()
         await self._async_check()
+
+    def unsubscribe_schedule(self) -> None:
+        """Cancel the periodic check subscription without touching
+        `enabled` or notifying listeners - used on HA shutdown/entry
+        unload instead of async_disable() so the switch's last *real*
+        on/off value is what gets restored on the next restart, not a
+        shutdown-time forced "off" (2026-10-09 fix, see __init__.py)."""
+        if self._unsub_interval is not None:
+            self._unsub_interval()
+            self._unsub_interval = None
 
     async def async_disable(self) -> None:
         if not self.enabled:
@@ -303,6 +371,7 @@ class WinterSunController:
             # immediately instead of waiting one extra check.
             self._last_check_target = target
             self._last_check_date = today
+            self._schedule_save()
             return
 
         delta = self._last_check_target - target
@@ -314,7 +383,7 @@ class WinterSunController:
             # most recent (possibly tiny) increment.
             return
 
-        pulse_seconds = delta * self.full_travel_time
+        pulse_seconds = delta * self.full_travel_time + self.pulse_start_delay
         _LOGGER.info(
             "Winter sun mode: pulsing closed for %.1fs (azimuth %.0f°, "
             "target moved %.2f -> %.2f since last check)",
@@ -327,6 +396,7 @@ class WinterSunController:
         self._last_check_date = dt_util.now().date()
         self._virtual_position = max(0.0, self._virtual_position - delta)
         self._start_animation_to(self._virtual_position)  # runs concurrently with the real pulse below
+        self._schedule_save()
         await self._async_pulse_close(pulse_seconds)
 
     async def _async_pulse_close(self, duration: float) -> None:

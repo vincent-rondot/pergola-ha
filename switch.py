@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .entity import PergolaEntity
 
@@ -84,10 +85,12 @@ class PergolaWindProtectionSwitch(PergolaEntity, SwitchEntity):
         await self._wind_protection.async_disable()
 
 
-class PergolaWinterSunSwitch(PergolaEntity, SwitchEntity):
+class PergolaWinterSunSwitch(PergolaEntity, SwitchEntity, RestoreEntity):
     """Winter sun mode: nudges the slats closed through the day to track the
-    sun, starting from whenever the cover was last opened by hand. Off by
-    default - opt-in, seasonal."""
+    sun, starting from whenever the cover was last opened by hand. Opt-in,
+    seasonal - but restores whatever it was last set to across a HA restart
+    (2026-10-09 fix) rather than always coming back off. It never turns
+    itself on by force; it only resumes being on if it already was."""
 
     _attr_name = "Winter sun mode"
 
@@ -101,7 +104,12 @@ class PergolaWinterSunSwitch(PergolaEntity, SwitchEntity):
         return self._winter_sun.enabled
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self._winter_sun.add_listener(self._handle_update)
+        if not self._winter_sun.enabled:
+            last_state = await self.async_get_last_state()
+            if last_state is not None and last_state.state == "on":
+                await self._winter_sun.async_enable()
 
     async def async_will_remove_from_hass(self) -> None:
         self._winter_sun.remove_listener(self._handle_update)

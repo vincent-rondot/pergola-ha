@@ -54,13 +54,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _get_weather_entity_id,
         lambda: wind_protection.wind_speed_threshold,
     )
+    # Restore the sun-tracking baseline saved before the last shutdown
+    # (2026-10-09 fix) - must happen before platforms are set up, since the
+    # Winter Sun switch's RestoreEntity-driven async_enable() (if it was on)
+    # runs during async_forward_entry_setups() below and needs this baseline
+    # to already be in place.
+    await winter_sun.async_load()
+
     entry.runtime_data = PergolaRuntimeData(
         connection=connection, wind_protection=wind_protection, winter_sun=winter_sun
     )
 
     async def _async_disconnect(_event=None) -> None:
         await wind_protection.async_disable()
-        await winter_sun.async_disable()
+        # NOT winter_sun.async_disable(): that would write state="off" to
+        # the switch right before HA exits, which RestoreEntity would then
+        # faithfully restore on the next start, silently undoing whatever
+        # the user had it set to (2026-10-09 fix). Only tear down the
+        # schedule subscription, leave `enabled`/the entity state alone.
+        winter_sun.unsubscribe_schedule()
         await connection.async_disconnect()
 
     # Disconnect on entry unload/removal (e.g. deleting the integration) AND

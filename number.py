@@ -20,6 +20,7 @@ async def async_setup_entry(
         [
             PergolaIdleTimeoutNumber(entry),
             PergolaFullTravelTimeNumber(entry),
+            PergolaPulseStartDelayNumber(entry),
             PergolaWindThresholdNumber(entry),
             PergolaPositionDeadbandNumber(entry),
             PergolaEstimatedOpenPercentageNumber(entry),
@@ -78,6 +79,45 @@ class PergolaFullTravelTimeNumber(PergolaEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         self._winter_sun.full_travel_time = value
+        self.async_write_ha_state()
+
+
+class PergolaPulseStartDelayNumber(PergolaEntity, NumberEntity):
+    """Fixed overhead added to every winter sun Close pulse, on top of the
+    proportional delta*full_travel_time duration, to account for however
+    long the motor/BLE link takes to actually start moving after the
+    command is sent. Every pulse pays this cost regardless of its size, so
+    small pulses are disproportionately shortchanged if it's left at 0 -
+    this is believed to be why winter sun mode's real slats drifted more
+    open than the modelled position through the afternoon of 2026-10-10.
+
+    Default (0.4s, doubled from 0.2s on 2026-10-12 - still not enough) is an
+    arbitrary placeholder, not yet measured. To
+    calibrate it properly: from fully open, trigger a continuous Close (not
+    a short pulse) while filming or timing it, and note separately (a) the
+    time from sending the command to the first visible slat movement - that
+    is this value - and (b) the time from that first movement to the slats
+    stopping - set that as "Full travel time" instead."""
+
+    _attr_name = "Pulse start delay"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 0
+    _attr_native_max_value = 10
+    _attr_native_step = 0.1
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        """Initialize the number entity."""
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_pulse_start_delay"
+
+    @property
+    def native_value(self) -> float:
+        return self._winter_sun.pulse_start_delay
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._winter_sun.pulse_start_delay = value
         self.async_write_ha_state()
 
 
