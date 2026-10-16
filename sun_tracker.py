@@ -334,12 +334,16 @@ class WinterSunController:
         try:
             await pergola.close()
             await asyncio.sleep(duration)
-            # NOT pergola.stop() - confirmed on the real hardware that the
-            # dedicated stop command (cmd_active/'B') does not interrupt
-            # motion at all. The device has no real standalone stop:
-            # re-sending the direction that's already moving is what
-            # actually halts it (same as the vendor app's buttons - holding
-            # Open or Close is a toggle, not press-to-move/press-to-stop).
-            await pergola.close()
+            # 2026-10-08 fix: this used to call pergola.close() again here,
+            # relying on the open/close toggle to halt the motor. But
+            # Pergola.close() no-ops when self._motion is already "close"
+            # (see pergola_controller/__init__.py) - so that second close()
+            # never actually sent anything over BLE, and the motor just
+            # kept running on its own past this pulse's intended duration
+            # (observed: small nudge pulses ended up fully closing the
+            # pergola). pergola.stop() has no such early-return guard - it
+            # unconditionally resends the current direction (close, here)
+            # to really toggle the motor off.
+            await pergola.stop()
         finally:
             self._connection.async_schedule_idle_disconnect()
