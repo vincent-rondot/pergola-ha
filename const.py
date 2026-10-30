@@ -16,3 +16,4 @@ PLATFORMS: list[Platform] = [
 
 CONF_CLIENT_ID = "client_id"
 CONF_WEATHER_ENTITY_ID = "weather_entity_id"
+CONF_RAIN_FORECAST_ENTITY_ID = "rain_forecast_entity_id"

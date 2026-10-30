@@ -148,26 +148,27 @@ class PergolaCover(PergolaEntity, CoverEntity):
         """Open the pergola."""
         if self._check_move_cooldown():
             return
-        async with self._async_connect() as pergola:
+        async with self._async_connect(expect_motion=True) as pergola:
             await pergola.open()
         self._attr_is_closed = False
         self.async_write_ha_state()
-        # Winter sun mode never opens the cover itself - this is the only
-        # place its tracking baseline gets (re)established.
-        self._winter_sun.on_manual_open()
+        # Winter sun mode's cosmetic "estimated open percentage" follows
+        # the device's own live status feed on its own (see
+        # WinterSunController._on_connection_status()) - nothing to notify
+        # here, and its tracking baseline is deliberately never touched by
+        # a manual open, only by the daily auto-open/auto-close (2026-10-17
+        # redesign - see sun_tracker.py's module docstring).
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the pergola."""
         if self._check_move_cooldown():
             return
-        async with self._async_connect() as pergola:
+        async with self._async_connect(expect_motion=True) as pergola:
             await pergola.close()
         self._attr_is_closed = True
         self.async_write_ha_state()
-        # Keeps winter sun mode's "estimated open percentage" diagnostic
-        # honest for anyone testing/watching it - doesn't change what winter
-        # sun mode does next, see on_manual_close()'s docstring.
-        self._winter_sun.on_manual_close()
+        # See async_open_cover() - the cosmetic estimate follows the
+        # device's own status feed on its own, nothing to call here.
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the pergola.
@@ -186,11 +187,8 @@ class PergolaCover(PergolaEntity, CoverEntity):
         # very likely wants to immediately try Open or Close next, not wait
         # out a cooldown meant to catch accidental repeats.
         self._last_move_command_at = 0.0
-        # Freezes the estimate where it actually stopped (e.g. a hand-timed
-        # manual pulse: Close, wait a few seconds, Stop) instead of letting
-        # it keep drifting towards whatever the preceding Open/Close was
-        # heading for.
-        self._winter_sun.on_manual_stop()
+        # See async_open_cover() - the cosmetic estimate follows the
+        # device's own status feed on its own, nothing to call here.
 
     async def async_added_to_hass(self) -> None:
         self._connection.add_status_listener(self._handle_status_update)

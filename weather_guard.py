@@ -64,6 +64,48 @@ def is_raining(hass: HomeAssistant, weather_entity_id: str | None) -> bool:
     return state is not None and state.state in RAIN_STATES
 
 
+# The meteofrance integration's "next rain" sensor's 1_hour_forecast
+# attribute uses this exact label for a dry 5-min slot (French, as shipped
+# by the integration) - any other value in that slot means rain/snow/etc. is
+# forecast for it.
+METEOFRANCE_DRY_LABEL = "Temps sec"
+
+
+def is_rain_forecast(
+    hass: HomeAssistant, rain_forecast_entity_id: str | None, window_minutes: float = 30
+) -> bool:
+    """Whether the configured meteofrance "next rain" nowcast sensor
+    predicts anything other than dry weather within the next
+    `window_minutes` (minute-level nowcast, not an hourly forecast like the
+    main weather entity).
+
+    Added 2026-10-21 (Vincent): the pergola's own onboard rain sensor
+    reliably closes it once rain actually starts (see CLAUDE.md), but has
+    no advance warning - the dawn auto-open check could land moments before
+    rain begins and open straight onto it. This is checked alongside
+    is_raining() (on both the Met.no AND meteofrance weather entities) so a
+    "yes" from either source - rain right now, or rain forecast in the next
+    `window_minutes` - cancels the auto-open. Fails open (False) on a
+    missing entity/attribute, consistent with is_windy() below - this is one
+    of several independent checks, not the only line of defense."""
+    if rain_forecast_entity_id is None:
+        return False
+    state = hass.states.get(rain_forecast_entity_id)
+    if state is None:
+        return False
+    forecast = state.attributes.get("1_hour_forecast")
+    if not forecast:
+        return False
+    for minute_label, condition in forecast.items():
+        try:
+            minute = int(str(minute_label).split()[0])
+        except (ValueError, IndexError):
+            continue
+        if minute <= window_minutes and condition != METEOFRANCE_DRY_LABEL:
+            return True
+    return False
+
+
 def get_wind_speed(hass: HomeAssistant, weather_entity_id: str | None) -> float | None:
     """Current wind speed reported by the configured weather entity, converted
     to THRESHOLD_UNIT (the entity's own reported unit can be anything - e.g.

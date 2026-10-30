@@ -25,7 +25,12 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
 )
 
-from .const import CONF_CLIENT_ID, CONF_WEATHER_ENTITY_ID, DOMAIN
+from .const import (
+    CONF_CLIENT_ID,
+    CONF_RAIN_FORECAST_ENTITY_ID,
+    CONF_WEATHER_ENTITY_ID,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,8 +138,10 @@ class PergolaConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class PergolaOptionsFlowHandler(OptionsFlowWithReload):
-    """Options for Pergola - currently just the weather entity used by wind
-    protection and winter sun mode."""
+    """Options for Pergola - the weather entity used by wind protection and
+    winter sun mode, plus (2026-10-21) a meteofrance "next rain" nowcast
+    sensor used as a second, more immediate source for the dawn auto-open
+    rain check - see weather_guard.is_rain_forecast()."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -147,6 +154,9 @@ class PergolaOptionsFlowHandler(OptionsFlowWithReload):
             {
                 vol.Optional(CONF_WEATHER_ENTITY_ID): EntitySelector(
                     EntitySelectorConfig(domain="weather")
+                ),
+                vol.Optional(CONF_RAIN_FORECAST_ENTITY_ID): EntitySelector(
+                    EntitySelectorConfig(domain="sensor")
                 ),
             }
         )

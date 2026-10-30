@@ -6,7 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_PIN, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_CLIENT_ID, CONF_WEATHER_ENTITY_ID, PLATFORMS
+from .const import (
+    CONF_CLIENT_ID,
+    CONF_RAIN_FORECAST_ENTITY_ID,
+    CONF_WEATHER_ENTITY_ID,
+    PLATFORMS,
+)
 from .entity import PergolaConnection, PergolaRuntimeData
 from .sun_tracker import WinterSunController
 from .weather_guard import WindProtectionController
@@ -40,6 +45,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # isn't the only way this can pick up an edit.
         return entry.options.get(CONF_WEATHER_ENTITY_ID)
 
+    def _get_rain_forecast_entity_id() -> str | None:
+        return entry.options.get(CONF_RAIN_FORECAST_ENTITY_ID)
+
     connection = PergolaConnection(
         hass,
         entry.data[CONF_ADDRESS],
@@ -52,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry,
         connection,
         _get_weather_entity_id,
+        _get_rain_forecast_entity_id,
         lambda: wind_protection.wind_speed_threshold,
     )
     # Restore the sun-tracking baseline saved before the last shutdown
