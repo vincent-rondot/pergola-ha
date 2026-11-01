@@ -1,12 +1,12 @@
 {
   "domain": "pergola",
   "name": "Pergola",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "config_flow": true,
   "dependencies": ["bluetooth", "sun"],
   "iot_class": "assumed",
   "requirements": [
-    "pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.2.3",
+    "pergola_controller @ git+https://github.com/vincent-rondot/pergola_controller.git@v0.2.4",
     "astral>=2.2"
   ]
 }
